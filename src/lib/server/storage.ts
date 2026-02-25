@@ -63,6 +63,11 @@ class KVProvider implements IStorageProvider {
 let sqliteDb: any = null;
 class SQLiteProvider implements IStorageProvider {
     private db: any;
+    private getStmt: any;
+    private putStmt: any;
+    private deleteStmt: any;
+    private cleanupStmt: any;
+
     constructor(Database: any, dbPath: string) {
         if (!sqliteDb) {
             sqliteDb = new Database(dbPath);
@@ -78,16 +83,20 @@ class SQLiteProvider implements IStorageProvider {
             sqliteDb.exec(`CREATE INDEX IF NOT EXISTS idx_expires ON notes(expires_at)`);
         }
         this.db = sqliteDb;
+        this.getStmt = this.db.prepare('SELECT blob, burn FROM notes WHERE id = ? AND expires_at > ?');
+        this.putStmt = this.db.prepare('INSERT INTO notes (id, blob, burn, expires_at) VALUES (?, ?, ?, ?)');
+        this.deleteStmt = this.db.prepare('DELETE FROM notes WHERE id = ?');
+        this.cleanupStmt = this.db.prepare('DELETE FROM notes WHERE expires_at < ?');
     }
 
     private cleanup() {
         const now = Math.floor(Date.now() / 1000);
-        sqliteDb.prepare('DELETE FROM notes WHERE expires_at < ?').run(now);
+        this.cleanupStmt.run(now);
     }
 
     async get(id: string): Promise<StorageItem | null> {
         this.cleanup();
-        const row = sqliteDb.prepare('SELECT blob, burn FROM notes WHERE id = ? AND expires_at > ?').get(id, Math.floor(Date.now() / 1000));
+        const row = this.getStmt.get(id, Math.floor(Date.now() / 1000));
         if (!row) return null;
         return {
             blob: row.blob,
@@ -98,7 +107,7 @@ class SQLiteProvider implements IStorageProvider {
     async put(id: string, blob: string, options: { expirationTtl: number; metadata: { burn: boolean } }): Promise<void> {
         this.cleanup();
         const expiresAt = Math.floor(Date.now() / 1000) + options.expirationTtl;
-        sqliteDb.prepare('INSERT INTO notes (id, blob, burn, expires_at) VALUES (?, ?, ?, ?)').run(
+        this.putStmt.run(
             id,
             blob,
             options.metadata.burn ? 1 : 0,
@@ -107,7 +116,7 @@ class SQLiteProvider implements IStorageProvider {
     }
 
     async delete(id: string): Promise<void> {
-        sqliteDb.prepare('DELETE FROM notes WHERE id = ?').run(id);
+        this.deleteStmt.run(id);
     }
 }
 
